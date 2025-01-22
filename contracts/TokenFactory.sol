@@ -173,7 +173,7 @@ contract TokenFactory {
             listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL &&
             !listedToken.poolCreated
         ) {
-            // Create the pool and add liquidity
+            // Create the pool and add liquidity from TokenFactory
             createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
         }
     }
@@ -224,7 +224,7 @@ contract TokenFactory {
     function createPoolAndAddLiquidity(
         address memeTokenAddress,
         uint256 tokenAmount
-    ) public payable {
+    ) public payable onlyOwner {
         MemeToken storage listedToken = addressToMemeTokenMapping[
             memeTokenAddress
         ];
