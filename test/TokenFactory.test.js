@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
 describe("TokenFactory", function () {
-  let tokenFactory;
+  let tokenFactory, qiteSwap;
   let deployer, user;
 
   const MEMETOKEN_CREATION_PLATFORM_FEE = ethers.parseUnits("0.0001", "ether");
@@ -10,11 +10,17 @@ describe("TokenFactory", function () {
   beforeEach(async function () {
     [deployer, user] = await ethers.getSigners();
 
+    // Deploy QiteSwap contract
+    const QiteSwapContract = await ethers.getContractFactory("QiteSwap");
+    qiteSwap = await QiteSwapContract.deploy();
+    await qiteSwap.waitForDeployment();
+
+    // Deploy TokenFactory contract with the address of QiteSwap
     const TokenFactoryContract = await ethers.getContractFactory(
       "TokenFactory"
     );
-    tokenFactory = await TokenFactoryContract.deploy(); // Deploy the contract
-    await tokenFactory.waitForDeployment(); // Ensure deployment completes
+    tokenFactory = await TokenFactoryContract.deploy(qiteSwap.target);
+    await tokenFactory.waitForDeployment();
   });
 
   it("should create a meme token successfully", async function () {
@@ -200,5 +206,47 @@ describe("TokenFactory", function () {
       (tokensToBuy - tokensToSell).toString(),
       "User should have fewer tokens after selling"
     );
+  });
+
+  it("should create a pool and add liquidity after funding goal is reached", async function () {
+    console.log("Step 1: Creating meme token...");
+    const tx = await tokenFactory
+      .connect(user)
+      .createMemeToken(
+        "MemeToken",
+        "MEME",
+        "https://example.com/token.png",
+        "A fun meme token",
+        {
+          value: MEMETOKEN_CREATION_PLATFORM_FEE,
+        }
+      );
+    await tx.wait();
+
+    const allTokens = await tokenFactory.getAllMemeTokens();
+    const createdToken = allTokens[0];
+    const memeTokenAddress = createdToken.tokenAddress;
+
+    console.log("Step 2: Simulating funding...");
+    const tokensToBuy = ethers.parseUnits("600", 18); // BigNumber
+    const fundingGoal = ethers.parseUnits("10", 18); // BigNumber
+    await tokenFactory.setFundingRaised(memeTokenAddress, fundingGoal); // Mock funding
+
+    console.log("Step 3: Adding liquidity to the pool...");
+    const tokenAmount = ethers.parseUnits("100", 18);
+    const ethAmount = ethers.parseUnits("1", 18);
+
+    const memeToken = await ethers.getContractAt("Token", memeTokenAddress);
+    await memeToken.connect(user).approve(tokenFactory.target, tokenAmount);
+
+    await expect(
+      tokenFactory
+        .connect(user)
+        .createPoolAndAddLiquidity(memeTokenAddress, tokenAmount, {
+          value: ethAmount,
+        })
+    ).to.not.be.reverted;
+
+    console.log("Pool and liquidity added successfully.");
   });
 });

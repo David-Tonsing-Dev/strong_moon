@@ -7,9 +7,11 @@ import "./QitePool.sol";
 
 contract TokenFactory {
     address public owner;
+    QiteSwap public qiteSwap;
 
-    constructor() {
-        owner = msg.sender; // Set the deployer as the owner
+    constructor(address qiteSwapAddress) {
+        owner = msg.sender; // Set deployer as owner
+        qiteSwap = QiteSwap(qiteSwapAddress); // Initialize QiteSwap
     }
 
     struct MemeToken {
@@ -20,6 +22,7 @@ contract TokenFactory {
         uint fundingRaised;
         address tokenAddress;
         address creatorAddress;
+        bool poolCreated;
     }
 
     address[] public memeTokenAddresses;
@@ -42,12 +45,17 @@ contract TokenFactory {
         string name,
         string symbol
     );
-
     event MemeTokenPurchased(
         address indexed buyer,
         address indexed tokenAddress,
         uint256 quantity,
         uint256 cost
+    );
+    event PoolCreated(
+        address indexed tokenAddress,
+        address indexed poolAddress,
+        uint256 ethwLiquidity,
+        uint256 tokenLiquidity
     );
 
     modifier onlyOwner() {
@@ -73,7 +81,7 @@ contract TokenFactory {
     }
 
     function exp(uint256 x) internal pure returns (uint256) {
-        if (x > 10 ** 20) return 10 ** 18; // Avoid overflow for large x
+        if (x > 10 ** 20) return 10 ** 18;
 
         uint256 sum = 10 ** 18;
         uint256 term = 10 ** 18;
@@ -82,7 +90,7 @@ contract TokenFactory {
             term = (term * x) / (i * 10 ** 18);
             sum += term;
 
-            if (term < 1) break; // Stop when terms are negligible
+            if (term < 1) break;
         }
 
         return sum;
@@ -106,7 +114,8 @@ contract TokenFactory {
             imageUrl,
             0,
             tokenAddress,
-            msg.sender
+            msg.sender,
+            false
         );
 
         memeTokenAddresses.push(tokenAddress);
@@ -124,7 +133,7 @@ contract TokenFactory {
         require(
             addressToMemeTokenMapping[memeTokenAddress].tokenAddress !=
                 address(0),
-            "Token is not listed"
+            "Token not listed"
         );
 
         MemeToken storage listedToken = addressToMemeTokenMapping[
@@ -164,7 +173,7 @@ contract TokenFactory {
         require(
             addressToMemeTokenMapping[memeTokenAddress].tokenAddress !=
                 address(0),
-            "Token is not listed"
+            "Token not listed"
         );
 
         MemeToken storage listedToken = addressToMemeTokenMapping[
@@ -186,17 +195,14 @@ contract TokenFactory {
 
         require(
             address(this).balance >= sellPrice,
-            "Contract does not have enough ETH"
+            "Not enough ETH in contract"
         );
 
-        // Burn the tokens from the seller
-        memeToken.burn(msg.sender, tokenQtyScaled); // Adjusted order of arguments
+        memeToken.burn(msg.sender, tokenQtyScaled);
 
-        // Update funding raised
-        listedToken.fundingRaised -= sellPrice;
-
-        // Transfer ETH to the seller
         payable(msg.sender).transfer(sellPrice);
+
+        listedToken.fundingRaised -= sellPrice;
 
         emit MemeTokenPurchased(
             msg.sender,
@@ -206,6 +212,38 @@ contract TokenFactory {
         );
     }
 
+    function createPoolAndAddLiquidity(
+        address memeTokenAddress,
+        uint256 tokenAmount
+    ) public payable {
+        MemeToken storage listedToken = addressToMemeTokenMapping[
+            memeTokenAddress
+        ];
+
+        require(listedToken.tokenAddress != address(0), "Token not listed");
+        require(
+            listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL,
+            "Funding goal not reached"
+        );
+        require(!listedToken.poolCreated, "Pool already created");
+
+        address poolAddress = qiteSwap.createPool(
+            memeTokenAddress,
+            listedToken.name,
+            string(abi.encodePacked(listedToken.symbol, " LP"))
+        );
+
+        Token memeToken = Token(memeTokenAddress);
+        memeToken.approve(poolAddress, tokenAmount);
+
+        QitePool pool = QitePool(payable(poolAddress));
+        pool.addLiquidity{value: msg.value}(tokenAmount);
+
+        listedToken.poolCreated = true;
+
+        emit PoolCreated(memeTokenAddress, poolAddress, msg.value, tokenAmount);
+    }
+
     function getAllMemeTokens() public view returns (MemeToken[] memory) {
         uint256 length = memeTokenAddresses.length;
         MemeToken[] memory allTokens = new MemeToken[](length);
@@ -213,5 +251,12 @@ contract TokenFactory {
             allTokens[i] = addressToMemeTokenMapping[memeTokenAddresses[i]];
         }
         return allTokens;
+    }
+
+    function setFundingRaised(address memeTokenAddress, uint256 amount) public {
+        MemeToken storage listedToken = addressToMemeTokenMapping[
+            memeTokenAddress
+        ];
+        listedToken.fundingRaised = amount;
     }
 }
