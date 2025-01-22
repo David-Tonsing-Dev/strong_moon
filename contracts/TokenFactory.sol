@@ -160,6 +160,52 @@ contract TokenFactory {
         }
     }
 
+    function sellMemeToken(address memeTokenAddress, uint256 tokenQty) public {
+        require(
+            addressToMemeTokenMapping[memeTokenAddress].tokenAddress !=
+                address(0),
+            "Token is not listed"
+        );
+
+        MemeToken storage listedToken = addressToMemeTokenMapping[
+            memeTokenAddress
+        ];
+        Token memeToken = Token(memeTokenAddress);
+
+        uint256 tokenQtyScaled = tokenQty * DECIMALS;
+
+        require(
+            memeToken.balanceOf(msg.sender) >= tokenQtyScaled,
+            "Insufficient token balance"
+        );
+
+        uint256 sellPrice = calculateCost(
+            (memeToken.totalSupply() - INIT_SUPPLY) / DECIMALS,
+            tokenQty
+        );
+
+        require(
+            address(this).balance >= sellPrice,
+            "Contract does not have enough ETH"
+        );
+
+        // Burn the tokens from the seller
+        memeToken.burn(msg.sender, tokenQtyScaled); // Adjusted order of arguments
+
+        // Update funding raised
+        listedToken.fundingRaised -= sellPrice;
+
+        // Transfer ETH to the seller
+        payable(msg.sender).transfer(sellPrice);
+
+        emit MemeTokenPurchased(
+            msg.sender,
+            memeTokenAddress,
+            tokenQty,
+            sellPrice
+        );
+    }
+
     function getAllMemeTokens() public view returns (MemeToken[] memory) {
         uint256 length = memeTokenAddresses.length;
         MemeToken[] memory allTokens = new MemeToken[](length);

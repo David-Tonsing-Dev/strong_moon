@@ -117,4 +117,88 @@ describe("TokenFactory", function () {
 
     expect(updatedToken.fundingRaised).to.equal(cost);
   });
+  it("should create and sell meme tokens successfully", async function () {
+    const name = "MemeToken";
+    const symbol = "MEME";
+    const imageUrl = "https://example.com/token.png";
+    const description = "A fun meme token";
+
+    // Create a meme token
+    const tx = await tokenFactory
+      .connect(user)
+      .createMemeToken(name, symbol, imageUrl, description, {
+        value: MEMETOKEN_CREATION_PLATFORM_FEE,
+      });
+    await tx.wait();
+
+    const allTokens = await tokenFactory.getAllMemeTokens();
+    const createdToken = allTokens[0];
+    const memeTokenAddress = createdToken.tokenAddress;
+
+    // User buys tokens
+    const tokensToBuy = ethers.parseUnits("10", 18); // BigInt
+    const cost = await tokenFactory.calculateCost(
+      ethers.parseUnits("0", 18),
+      tokensToBuy / 10n ** 18n
+    );
+    await tokenFactory
+      .connect(user)
+      .buyMemeToken(memeTokenAddress, tokensToBuy / 10n ** 18n, {
+        value: cost,
+      });
+
+    const memeToken = await ethers.getContractAt("Token", memeTokenAddress);
+    const userBalance = await memeToken.balanceOf(user.address);
+    expect(userBalance).to.equal(
+      tokensToBuy,
+      "User should own the purchased tokens"
+    );
+
+    // User sells tokens
+    const tokensToSell = ethers.parseUnits("5", 18); // BigInt
+    const sellPrice = await tokenFactory.calculateCost(
+      ethers.parseUnits("10", 18), // Current supply
+      tokensToSell / 10n ** 18n
+    );
+
+    const contractBalanceBefore = BigInt(
+      (await ethers.provider.getBalance(tokenFactory.target)).toString()
+    );
+    const userBalanceBefore = BigInt(
+      (await ethers.provider.getBalance(user.address)).toString()
+    );
+
+    const sellTx = await tokenFactory
+      .connect(user)
+      .sellMemeToken(memeTokenAddress, tokensToSell / 10n ** 18n);
+
+    const receipt = await sellTx.wait();
+    const gasUsed = BigInt(receipt.gasUsed.toString());
+    const gasPrice = sellTx.gasPrice
+      ? BigInt(sellTx.gasPrice.toString())
+      : BigInt((await ethers.provider.getGasPrice()).toString());
+    const gasCost = gasUsed * gasPrice;
+
+    const contractBalanceAfter = BigInt(
+      (await ethers.provider.getBalance(tokenFactory.target)).toString()
+    );
+    const userBalanceAfter = BigInt(
+      (await ethers.provider.getBalance(user.address)).toString()
+    );
+
+    expect(contractBalanceAfter).to.equal(
+      contractBalanceBefore - sellPrice,
+      "Contract balance should decrease by sell price"
+    );
+    expect(userBalanceAfter).to.equal(
+      userBalanceBefore + sellPrice - gasCost,
+      "User balance should increase after selling (accounting for gas)"
+    );
+
+    const userBalanceAfterSell = await memeToken.balanceOf(user.address);
+    expect(userBalanceAfterSell.toString()).to.equal(
+      (tokensToBuy - tokensToSell).toString(),
+      "User should have fewer tokens after selling"
+    );
+  });
 });
