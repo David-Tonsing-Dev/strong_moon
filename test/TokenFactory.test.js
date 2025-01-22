@@ -208,8 +208,9 @@ describe("TokenFactory", function () {
     );
   });
 
-  it("should create a pool and add liquidity after funding goal is reached", async function () {
-    console.log("Step 1: Creating meme token...");
+  it("should automatically create a pool and add liquidity once the funding goal is met", async function () {
+    // Step 1: Create a meme token
+    console.log("Step 1++++++++++++++++++: Creating meme token...");
     const tx = await tokenFactory
       .connect(user)
       .createMemeToken(
@@ -227,12 +228,35 @@ describe("TokenFactory", function () {
     const createdToken = allTokens[0];
     const memeTokenAddress = createdToken.tokenAddress;
 
-    console.log("Step 2: Simulating funding...");
-    const tokensToBuy = ethers.parseUnits("600", 18); // BigNumber
-    const fundingGoal = ethers.parseUnits("10", 18); // BigNumber
-    await tokenFactory.setFundingRaised(memeTokenAddress, fundingGoal); // Mock funding
+    console.log("Step 2: Simulating token purchase to raise funds...");
+    const tokensToBuy = ethers.parseUnits("100", 18); // BigNumber
+    const cost = await tokenFactory.calculateCost(
+      ethers.parseUnits("0", 18), // Initial supply
+      tokensToBuy / 10n ** 18n // Correct BigInt scaling
+    );
 
-    console.log("Step 3: Adding liquidity to the pool...");
+    // Simulate buying tokens
+    await tokenFactory
+      .connect(user)
+      .buyMemeToken(memeTokenAddress, tokensToBuy / 10n ** 18n, {
+        value: cost,
+      });
+
+    // Verify the funding raised
+    const updatedToken = await tokenFactory.addressToMemeTokenMapping(
+      memeTokenAddress
+    );
+    console.log(
+      "Updated token funding raised:",
+      updatedToken.fundingRaised.toString()
+    );
+
+    // Step 3: Check if funding goal has been reached
+    const fundingGoal = ethers.parseUnits("10", 18); // Funding goal mock
+    await tokenFactory.setFundingRaised(memeTokenAddress, fundingGoal);
+
+    // Step 4: Check if liquidity pool is created automatically
+    console.log("Step 4: Verifying automatic pool creation...");
     const tokenAmount = ethers.parseUnits("100", 18);
     const ethAmount = ethers.parseUnits("1", 18);
 

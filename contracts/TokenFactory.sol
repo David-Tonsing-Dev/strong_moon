@@ -167,6 +167,15 @@ contract TokenFactory {
         if (excessEth > 0) {
             payable(msg.sender).transfer(excessEth);
         }
+
+        // Check if funding goal is reached and create pool if it has not been created yet
+        if (
+            listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL &&
+            !listedToken.poolCreated
+        ) {
+            // Create the pool and add liquidity
+            createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
+        }
     }
 
     function sellMemeToken(address memeTokenAddress, uint256 tokenQty) public {
