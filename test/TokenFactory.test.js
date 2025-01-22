@@ -8,7 +8,8 @@ describe("TokenFactory", function () {
   const MEMETOKEN_CREATION_PLATFORM_FEE = ethers.parseUnits("0.0001", "ether");
 
   beforeEach(async function () {
-    [deployer, user] = await ethers.getSigners();
+    // Assign different roles
+    [deployer, user] = await ethers.getSigners(); // Deployer and user are different
 
     // Deploy QiteSwap contract
     const QiteSwapContract = await ethers.getContractFactory("QiteSwap");
@@ -21,6 +22,8 @@ describe("TokenFactory", function () {
     );
     tokenFactory = await TokenFactoryContract.deploy(qiteSwap.target);
     await tokenFactory.waitForDeployment();
+
+    console.log("TokenFactory deployed by:", deployer.address);
   });
 
   it("should create a meme token successfully", async function () {
@@ -29,8 +32,10 @@ describe("TokenFactory", function () {
     const imageUrl = "https://example.com/token.png";
     const description = "A fun meme token";
 
+    // Create a meme token using the user account
+    console.log("Step 1: Creating meme token...");
     const tx = await tokenFactory
-      .connect(user)
+      .connect(user) // User creates the meme token
       .createMemeToken(name, symbol, imageUrl, description, {
         value: MEMETOKEN_CREATION_PLATFORM_FEE,
       });
@@ -45,6 +50,8 @@ describe("TokenFactory", function () {
     expect(createdToken.description).to.equal(description);
     expect(createdToken.tokenImageUrl).to.equal(imageUrl);
     expect(createdToken.creatorAddress).to.equal(user.address);
+
+    console.log("Meme token created with address:", createdToken.tokenAddress);
   });
 
   it("should fail if the fee is not paid", async function () {
@@ -53,11 +60,13 @@ describe("TokenFactory", function () {
     const imageUrl = "https://example.com/token.png";
     const description = "A fun meme token";
 
+    // Test with insufficient fee
+    console.log("Step 2: Testing failure with insufficient fee...");
     await expect(
       tokenFactory
         .connect(user)
         .createMemeToken(name, symbol, imageUrl, description, {
-          value: ethers.parseUnits("0.00001", "ether"),
+          value: ethers.parseUnits("0.00001", "ether"), // Fee not met
         })
     ).to.be.revertedWith("Fee not paid");
   });
