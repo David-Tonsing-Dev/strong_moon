@@ -29,7 +29,7 @@ contract TokenFactory {
     mapping(address => MemeToken) public addressToMemeTokenMapping;
 
     uint constant MEMETOKEN_CREATION_PLATFORM_FEE = 0.0001 ether;
-    uint constant MEMECOIN_FUNDING_GOAL = 10 ether;
+    uint constant MEMECOIN_FUNDING_GOAL = 10 ether; // Set the funding goal to 10 ETHW
 
     uint constant DECIMALS = 10 ** 18;
     uint constant MAX_SUPPLY = 1000000000 * DECIMALS;
@@ -66,39 +66,6 @@ contract TokenFactory {
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner can call this function");
         _;
-    }
-
-    function calculateCost(
-        uint256 currentSupply,
-        uint256 tokensToBuy
-    ) public pure returns (uint256) {
-        uint256 newSupply = currentSupply + tokensToBuy;
-
-        uint256 exp1 = exp((K * newSupply) / DECIMALS);
-        uint256 exp2 = exp((K * currentSupply) / DECIMALS);
-
-        uint256 difference = exp1 > exp2 ? exp1 - exp2 : exp2 - exp1;
-
-        return
-            difference < 10 ** 12
-                ? INITIAL_PRICE
-                : (INITIAL_PRICE * difference) / DECIMALS;
-    }
-
-    function exp(uint256 x) internal pure returns (uint256) {
-        if (x > 10 ** 20) return 10 ** 18;
-
-        uint256 sum = 10 ** 18;
-        uint256 term = 10 ** 18;
-
-        for (uint256 i = 1; i <= 20; i++) {
-            term = (term * x) / (i * 10 ** 18);
-            sum += term;
-
-            if (term < 1) break;
-        }
-
-        return sum;
     }
 
     function createMemeToken(
@@ -152,29 +119,24 @@ contract TokenFactory {
         uint256 tokenQtyScaled = tokenQty * DECIMALS;
         require(tokenQtyScaled <= availableQty, "Not enough tokens available");
 
-        uint256 requiredEth = calculateCost(
-            (currentSupply - INIT_SUPPLY) / DECIMALS,
-            tokenQty
-        );
+        uint256 requiredEth = msg.value;
         require(msg.value >= requiredEth, "Insufficient ETH sent");
 
-        // Check if funding exceeds the goal
+        // Ensure funding doesn't exceed the goal
         uint256 newFundingRaised = listedToken.fundingRaised + requiredEth;
         require(
             newFundingRaised <= MEMECOIN_FUNDING_GOAL,
             "Funding goal exceeded"
         );
 
-        // Update funding raised
+        // Update the funding raised
         listedToken.fundingRaised = newFundingRaised;
 
         // Determine the number of tokens to mint based on buyer count
         uint256 tokensToMint;
         if (buyerCount == 0) {
-            // First buyer gets more tokens
             tokensToMint = firstBuyerTokens * DECIMALS;
         } else {
-            // Subsequent buyers get fewer tokens
             tokensToMint =
                 (firstBuyerTokens / (tokenDecreaseFactor ** buyerCount)) *
                 DECIMALS;
@@ -199,8 +161,10 @@ contract TokenFactory {
             listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL &&
             !listedToken.poolCreated
         ) {
-            // Create the pool and add liquidity from TokenFactory
-            createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
+            // Only the owner can create the pool and add liquidity
+            if (msg.sender == owner) {
+                createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
+            }
         }
 
         // Increment the buyer count
@@ -250,10 +214,51 @@ contract TokenFactory {
         );
     }
 
+    function calculateCost(
+        uint256 currentSupply,
+        uint256 tokensToBuy
+    ) public pure returns (uint256) {
+        // Calculate the new supply after the purchase
+        uint256 newSupply = currentSupply + tokensToBuy;
+
+        // Calculate the exponential values for price calculation
+        uint256 exp1 = exp((K * newSupply) / DECIMALS);
+        uint256 exp2 = exp((K * currentSupply) / DECIMALS);
+
+        // Calculate the difference in the exponential values
+        uint256 difference = exp1 > exp2 ? exp1 - exp2 : exp2 - exp1;
+
+        // Return the price as per the exponential difference
+        return
+            difference < 10 ** 12
+                ? INITIAL_PRICE
+                : (INITIAL_PRICE * difference) / DECIMALS;
+    }
+
+    function exp(uint256 x) internal pure returns (uint256) {
+        // Limit the value to avoid overflow
+        if (x > 10 ** 20) return 10 ** 18;
+
+        uint256 sum = 10 ** 18;
+        uint256 term = 10 ** 18;
+
+        // Exponentiation by series expansion
+        for (uint256 i = 1; i <= 20; i++) {
+            term = (term * x) / (i * 10 ** 18);
+            sum += term;
+
+            // Break if the term is very small
+            if (term < 1) break;
+        }
+
+        return sum;
+    }
+
     function createPoolAndAddLiquidity(
         address memeTokenAddress,
         uint256 tokenAmount
     ) public payable onlyOwner {
+        // Make the function payable
         MemeToken storage listedToken = addressToMemeTokenMapping[
             memeTokenAddress
         ];
@@ -275,7 +280,7 @@ contract TokenFactory {
         memeToken.approve(poolAddress, tokenAmount);
 
         QitePool pool = QitePool(payable(poolAddress));
-        pool.addLiquidity{value: msg.value}(tokenAmount);
+        pool.addLiquidity{value: msg.value}(tokenAmount); // Accepting msg.value here
 
         listedToken.poolCreated = true;
 
