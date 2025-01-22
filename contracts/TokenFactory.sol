@@ -153,7 +153,15 @@ contract TokenFactory {
         );
         require(msg.value >= requiredEth, "Insufficient ETH sent");
 
-        listedToken.fundingRaised += requiredEth;
+        // Check if funding exceeds the goal
+        uint256 newFundingRaised = listedToken.fundingRaised + requiredEth;
+        require(
+            newFundingRaised <= MEMECOIN_FUNDING_GOAL,
+            "Funding goal exceeded"
+        );
+
+        // Update funding raised
+        listedToken.fundingRaised = newFundingRaised;
         memeToken.mint(tokenQtyScaled, msg.sender);
 
         emit MemeTokenPurchased(
