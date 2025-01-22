@@ -39,6 +39,11 @@ contract TokenFactory {
     uint256 public constant INITIAL_PRICE = 25000000000; // Initial price in wei
     uint256 public constant K = 8 * 10 ** 15; // Growth rate
 
+    // Track the first buyer
+    uint256 public firstBuyerTokens = 100; // Tokens for the first buyer
+    uint256 public tokenDecreaseFactor = 2; // Factor by which tokens decrease with each buyer
+    uint256 public buyerCount = 0; // Track the number of buyers
+
     event MemeTokenCreated(
         address indexed tokenAddress,
         address indexed creator,
@@ -162,7 +167,20 @@ contract TokenFactory {
 
         // Update funding raised
         listedToken.fundingRaised = newFundingRaised;
-        memeToken.mint(tokenQtyScaled, msg.sender);
+
+        // Determine the number of tokens to mint based on buyer count
+        uint256 tokensToMint;
+        if (buyerCount == 0) {
+            // First buyer gets more tokens
+            tokensToMint = firstBuyerTokens * DECIMALS;
+        } else {
+            // Subsequent buyers get fewer tokens
+            tokensToMint =
+                (firstBuyerTokens / (tokenDecreaseFactor ** buyerCount)) *
+                DECIMALS;
+        }
+
+        memeToken.mint(tokensToMint, msg.sender);
 
         emit MemeTokenPurchased(
             msg.sender,
@@ -184,6 +202,9 @@ contract TokenFactory {
             // Create the pool and add liquidity from TokenFactory
             createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
         }
+
+        // Increment the buyer count
+        buyerCount++;
     }
 
     function sellMemeToken(address memeTokenAddress, uint256 tokenQty) public {
