@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "./Token.sol";
+import "./QiteSwap.sol";
+import "./QitePool.sol";
 
 contract TokenFactory {
     address public owner;
-
-    uint256 public totalSupply; // Total tokens minted
+    address public qiteSwapAddress; // Address of the QiteSwap contract
+    uint256 public totalSupply; // Total tokens sold or used
     uint256 public constant INITIAL_PRICE_WEI = 100100000; // 100,100,000 WEI
     uint256 public constant INCREMENT_WEI = 100000; // Increment per token in WEI
     uint256 public constant MAX_SUPPLY = 1000000000; // Maximum supply of tokens
@@ -47,9 +49,15 @@ contract TokenFactory {
         string name,
         string symbol
     );
+    event LiquidityAdded(
+        address indexed pool,
+        uint256 tokenAmount,
+        uint256 ethAmount
+    );
 
-    constructor() {
+    constructor(address _qiteSwapAddress) {
         owner = msg.sender;
+        qiteSwapAddress = _qiteSwapAddress; // Initialize the QiteSwap address
         totalSupply = 0; // No tokens sold initially
         balances[owner] = MAX_SUPPLY; // Allocate all tokens to the owner
     }
@@ -112,6 +120,11 @@ contract TokenFactory {
         }
 
         emit TokensPurchased(msg.sender, amount, cost, tax);
+
+        // Check if CURVE_CAP is reached
+        if (totalSupply == CURVE_CAP) {
+            _addRemainingLiquidityToPool();
+        }
     }
 
     function sellTokens(uint256 amount) external {
@@ -184,5 +197,29 @@ contract TokenFactory {
     function withdraw() external {
         require(msg.sender == owner, "Only owner can withdraw");
         payable(owner).transfer(address(this).balance);
+    }
+
+    function _addRemainingLiquidityToPool() internal {
+        uint256 remainingTokens = MAX_SUPPLY - CURVE_CAP;
+        uint256 ethRaised = address(this).balance;
+
+        require(remainingTokens > 0 && ethRaised > 0, "No liquidity to add");
+
+        // Create liquidity pool
+        address payable pool = payable(
+            QiteSwap(qiteSwapAddress).createPool(
+                address(this),
+                "Liquidity Pool Token",
+                "LPT"
+            )
+        );
+
+        // Approve pool to spend tokens
+        IERC20(address(this)).approve(pool, remainingTokens);
+
+        // Add liquidity
+        QitePool(pool).addLiquidity{value: ethRaised}(remainingTokens);
+
+        emit LiquidityAdded(pool, remainingTokens, ethRaised);
     }
 }
