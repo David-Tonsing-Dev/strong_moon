@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.0;
 
 import "./Token.sol";
-import "./QiteSwap.sol";
-import "./QitePool.sol";
 
 contract TokenFactory {
     address public owner;
-    QiteSwap public qiteSwap;
 
-    constructor(address qiteSwapAddress) {
-        owner = msg.sender; // Set deployer as owner
-        qiteSwap = QiteSwap(qiteSwapAddress); // Initialize QiteSwap
-    }
+    uint256 public totalSupply; // Total tokens minted
+    uint256 public constant INITIAL_PRICE_WEI = 100100000; // 100,100,000 WEI
+    uint256 public constant INCREMENT_WEI = 100000; // Increment per token in WEI
+    uint256 public constant MAX_SUPPLY = 1000000000; // Maximum supply of tokens
+    uint256 public constant CURVE_CAP = 700000000; // Bonding curve stops at 700 million tokens
+    uint256 public constant TAX_PERCENTAGE = 1; // 1% tax on buy and sell
+    uint256 public constant TOKEN_CREATION_FEE = 0.01 ether; // Fee for creating a token
+
+    mapping(address => uint256) public balances;
 
     struct MemeToken {
         string name;
@@ -22,78 +24,117 @@ contract TokenFactory {
         uint fundingRaised;
         address tokenAddress;
         address creatorAddress;
-        bool poolCreated;
     }
 
     address[] public memeTokenAddresses;
     mapping(address => MemeToken) public addressToMemeTokenMapping;
 
-    uint constant MEMETOKEN_CREATION_PLATFORM_FEE = 0.0001 ether;
-    uint constant MEMECOIN_FUNDING_GOAL = 10 ether;
-
-    uint constant DECIMALS = 10 ** 18;
-    uint constant MAX_SUPPLY = 1000000000 * DECIMALS;
-    uint constant SELL_SUPPLY = 600000000 * DECIMALS;
-    uint constant INIT_SUPPLY = (20 * MAX_SUPPLY) / 100;
-
-    uint256 public constant INITIAL_PRICE = 25000000000; // Initial price in wei
-    uint256 public constant K = 8 * 10 ** 15; // Growth rate
-
-    event MemeTokenCreated(
-        address indexed tokenAddress,
+    event TokensPurchased(
+        address indexed buyer,
+        uint256 amount,
+        uint256 cost,
+        uint256 tax
+    );
+    event TokensSold(
+        address indexed seller,
+        uint256 amount,
+        uint256 revenue,
+        uint256 tax
+    );
+    event TokenCreated(
         address indexed creator,
+        address tokenAddress,
         string name,
         string symbol
     );
-    event MemeTokenPurchased(
-        address indexed buyer,
-        address indexed tokenAddress,
-        uint256 quantity,
-        uint256 cost
-    );
-    event PoolCreated(
-        address indexed tokenAddress,
-        address indexed poolAddress,
-        uint256 ethwLiquidity,
-        uint256 tokenLiquidity
-    );
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
-        _;
+    constructor() {
+        owner = msg.sender;
+        totalSupply = 0; // No tokens sold initially
+        balances[owner] = MAX_SUPPLY; // Allocate all tokens to the owner
     }
 
-    function calculateCost(
-        uint256 currentSupply,
-        uint256 tokensToBuy
-    ) public pure returns (uint256) {
-        uint256 newSupply = currentSupply + tokensToBuy;
+    function calculateCost(uint256 amount) public view returns (uint256) {
+        require(amount > 0, "Amount must be greater than zero");
+        require(
+            totalSupply + amount <= CURVE_CAP,
+            "Bonding curve limit reached"
+        );
 
-        uint256 exp1 = exp((K * newSupply) / DECIMALS);
-        uint256 exp2 = exp((K * currentSupply) / DECIMALS);
+        uint256 startPrice = INITIAL_PRICE_WEI + (totalSupply * INCREMENT_WEI);
+        uint256 endPrice = startPrice + ((amount - 1) * INCREMENT_WEI);
 
-        uint256 difference = exp1 > exp2 ? exp1 - exp2 : exp2 - exp1;
-
-        return
-            difference < 10 ** 12
-                ? INITIAL_PRICE
-                : (INITIAL_PRICE * difference) / DECIMALS;
+        // Arithmetic progression sum formula
+        return (amount * (startPrice + endPrice)) / 2;
     }
 
-    function exp(uint256 x) internal pure returns (uint256) {
-        if (x > 10 ** 20) return 10 ** 18;
+    function calculateRevenue(uint256 amount) public view returns (uint256) {
+        require(amount > 0, "Amount must be greater than zero");
+        require(amount <= totalSupply, "Amount exceeds available supply");
 
-        uint256 sum = 10 ** 18;
-        uint256 term = 10 ** 18;
+        uint256 endPrice = INITIAL_PRICE_WEI +
+            ((totalSupply - 1) * INCREMENT_WEI);
+        uint256 startPrice;
 
-        for (uint256 i = 1; i <= 20; i++) {
-            term = (term * x) / (i * 10 ** 18);
-            sum += term;
-
-            if (term < 1) break;
+        unchecked {
+            startPrice = endPrice - ((amount - 1) * INCREMENT_WEI);
         }
 
-        return sum;
+        // Arithmetic progression sum formula
+        return (amount * (startPrice + endPrice)) / 2;
+    }
+
+    function buyTokens(uint256 amount) external payable {
+        require(
+            balances[owner] >= amount,
+            "Not enough tokens available for purchase"
+        );
+
+        uint256 cost = calculateCost(amount);
+        uint256 tax = (cost * TAX_PERCENTAGE) / 100;
+        uint256 totalCost = cost + tax;
+
+        require(msg.value >= totalCost, "Insufficient Ether sent");
+
+        // Transfer tokens from the owner to the buyer
+        balances[owner] -= amount;
+        balances[msg.sender] += amount;
+
+        // Increment totalSupply after successful purchase
+        totalSupply += amount;
+
+        // Transfer the tax to the deployer (owner)
+        payable(owner).transfer(tax);
+
+        // Refund excess Ether if sent
+        if (msg.value > totalCost) {
+            payable(msg.sender).transfer(msg.value - totalCost);
+        }
+
+        emit TokensPurchased(msg.sender, amount, cost, tax);
+    }
+
+    function sellTokens(uint256 amount) external {
+        require(balances[msg.sender] >= amount, "Insufficient token balance");
+
+        uint256 revenue = calculateRevenue(amount);
+        uint256 tax = (revenue * TAX_PERCENTAGE) / 100;
+        uint256 netRevenue = revenue - tax;
+
+        // Transfer tokens from the seller to the owner
+        balances[msg.sender] -= amount;
+        balances[owner] += amount;
+
+        // Decrement totalSupply after tokens are sold
+        totalSupply -= amount;
+
+        // Transfer the net revenue to the seller
+        payable(msg.sender).transfer(netRevenue);
+
+        // Transfer the tax to the deployer (owner)
+        payable(owner).transfer(tax);
+
+        emit TokensSold(msg.sender, amount, revenue, tax);
     }
 
     function createMemeToken(
@@ -102,170 +143,46 @@ contract TokenFactory {
         string memory imageUrl,
         string memory description
     ) public payable returns (address) {
-        require(msg.value >= MEMETOKEN_CREATION_PLATFORM_FEE, "Fee not paid");
+        require(msg.value >= TOKEN_CREATION_FEE, "Insufficient creation fee");
+        require(bytes(name).length > 0, "Invalid token name");
+        require(bytes(symbol).length > 0, "Invalid token symbol");
 
-        Token token = new Token(name, symbol, INIT_SUPPLY);
-        address tokenAddress = address(token);
+        // Transfer the token creation fee to the deployer (owner)
+        payable(owner).transfer(msg.value);
 
-        MemeToken memory newToken = MemeToken(
+        // Create the new token
+        Token ct = new Token(name, symbol, 0); // Initial supply set to 0
+        address memeTokenAddress = address(ct);
+        MemeToken memory newlyCreatedToken = MemeToken(
             name,
             symbol,
             description,
             imageUrl,
             0,
-            tokenAddress,
-            msg.sender,
-            false
-        );
-
-        memeTokenAddresses.push(tokenAddress);
-        addressToMemeTokenMapping[tokenAddress] = newToken;
-
-        emit MemeTokenCreated(tokenAddress, msg.sender, name, symbol);
-
-        return tokenAddress;
-    }
-
-    function buyMemeToken(
-        address memeTokenAddress,
-        uint256 tokenQty
-    ) public payable {
-        require(
-            addressToMemeTokenMapping[memeTokenAddress].tokenAddress !=
-                address(0),
-            "Token not listed"
-        );
-
-        MemeToken storage listedToken = addressToMemeTokenMapping[
-            memeTokenAddress
-        ];
-        Token memeToken = Token(memeTokenAddress);
-
-        uint256 currentSupply = memeToken.totalSupply();
-        uint256 availableQty = SELL_SUPPLY - currentSupply;
-
-        uint256 tokenQtyScaled = tokenQty * DECIMALS;
-        require(tokenQtyScaled <= availableQty, "Not enough tokens available");
-
-        uint256 requiredEth = calculateCost(
-            (currentSupply - INIT_SUPPLY) / DECIMALS,
-            tokenQty
-        );
-        require(msg.value >= requiredEth, "Insufficient ETH sent");
-
-        listedToken.fundingRaised += requiredEth;
-        memeToken.mint(tokenQtyScaled, msg.sender);
-
-        emit MemeTokenPurchased(
-            msg.sender,
             memeTokenAddress,
-            tokenQty,
-            requiredEth
+            msg.sender
         );
+        memeTokenAddresses.push(memeTokenAddress);
+        addressToMemeTokenMapping[memeTokenAddress] = newlyCreatedToken;
 
-        uint256 excessEth = msg.value - requiredEth;
-        if (excessEth > 0) {
-            payable(msg.sender).transfer(excessEth);
-        }
-
-        // Check if funding goal is reached and create pool if it has not been created yet
-        if (
-            listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL &&
-            !listedToken.poolCreated
-        ) {
-            // Create the pool and add liquidity from TokenFactory
-            createPoolAndAddLiquidity(memeTokenAddress, tokenQtyScaled);
-        }
-    }
-
-    function sellMemeToken(address memeTokenAddress, uint256 tokenQty) public {
-        require(
-            addressToMemeTokenMapping[memeTokenAddress].tokenAddress !=
-                address(0),
-            "Token not listed"
-        );
-
-        MemeToken storage listedToken = addressToMemeTokenMapping[
-            memeTokenAddress
-        ];
-        Token memeToken = Token(memeTokenAddress);
-
-        uint256 tokenQtyScaled = tokenQty * DECIMALS;
-
-        require(
-            memeToken.balanceOf(msg.sender) >= tokenQtyScaled,
-            "Insufficient token balance"
-        );
-
-        uint256 sellPrice = calculateCost(
-            (memeToken.totalSupply() - INIT_SUPPLY) / DECIMALS,
-            tokenQty
-        );
-
-        require(
-            address(this).balance >= sellPrice,
-            "Not enough ETH in contract"
-        );
-
-        memeToken.burn(msg.sender, tokenQtyScaled);
-
-        payable(msg.sender).transfer(sellPrice);
-
-        listedToken.fundingRaised -= sellPrice;
-
-        emit MemeTokenPurchased(
-            msg.sender,
-            memeTokenAddress,
-            tokenQty,
-            sellPrice
-        );
-    }
-
-    function createPoolAndAddLiquidity(
-        address memeTokenAddress,
-        uint256 tokenAmount
-    ) public payable onlyOwner {
-        MemeToken storage listedToken = addressToMemeTokenMapping[
-            memeTokenAddress
-        ];
-
-        require(listedToken.tokenAddress != address(0), "Token not listed");
-        require(
-            listedToken.fundingRaised >= MEMECOIN_FUNDING_GOAL,
-            "Funding goal not reached"
-        );
-        require(!listedToken.poolCreated, "Pool already created");
-
-        address poolAddress = qiteSwap.createPool(
-            memeTokenAddress,
-            listedToken.name,
-            string(abi.encodePacked(listedToken.symbol, " LP"))
-        );
-
-        Token memeToken = Token(memeTokenAddress);
-        memeToken.approve(poolAddress, tokenAmount);
-
-        QitePool pool = QitePool(payable(poolAddress));
-        pool.addLiquidity{value: msg.value}(tokenAmount);
-
-        listedToken.poolCreated = true;
-
-        emit PoolCreated(memeTokenAddress, poolAddress, msg.value, tokenAmount);
+        emit TokenCreated(msg.sender, memeTokenAddress, name, symbol);
+        return memeTokenAddress;
     }
 
     function getAllMemeTokens() public view returns (MemeToken[] memory) {
-        uint256 length = memeTokenAddresses.length;
-        MemeToken[] memory allTokens = new MemeToken[](length);
-        for (uint256 i = 0; i < length; i++) {
+        MemeToken[] memory allTokens = new MemeToken[](
+            memeTokenAddresses.length
+        );
+        for (uint i = 0; i < memeTokenAddresses.length; i++) {
             allTokens[i] = addressToMemeTokenMapping[memeTokenAddresses[i]];
         }
         return allTokens;
     }
 
-    function setFundingRaised(address memeTokenAddress, uint256 amount) public {
-        MemeToken storage listedToken = addressToMemeTokenMapping[
-            memeTokenAddress
-        ];
-        listedToken.fundingRaised = amount;
+    receive() external payable {}
+
+    function withdraw() external {
+        require(msg.sender == owner, "Only owner can withdraw");
+        payable(owner).transfer(address(this).balance);
     }
 }

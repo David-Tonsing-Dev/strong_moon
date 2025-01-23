@@ -2,27 +2,24 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract Token is ERC20 {
-    address public owner;
-
+contract Token is ERC20, Ownable {
     constructor(
         string memory name,
         string memory symbol,
-        uint initialMintValue
-    ) ERC20(name, symbol) {
-        _mint(msg.sender, initialMintValue);
-        owner = msg.sender;
+        uint256 initialSupply
+    ) ERC20(name, symbol) Ownable(msg.sender) {
+        // Pass `msg.sender` to the `Ownable` constructor
+        // Mint the initial supply to the deployer
+        _mint(msg.sender, initialSupply);
     }
 
-    function mint(uint mintQty, address receiver) external returns (uint) {
-        require(msg.sender == owner, "Mint can only be called by the owner");
-        _mint(receiver, mintQty);
-        return 1;
+    function mint(uint256 amount, address to) external onlyOwner {
+        _mint(to, amount);
     }
 
-    // Optional: Function to allow the owner to burn tokens from any account
-    function burn(address userAddress, uint256 amount) public {
-        _burn(userAddress, amount);
+    function burn(address from, uint256 amount) external onlyOwner {
+        _burn(from, amount);
     }
 }
